@@ -4,8 +4,9 @@ library(EBImage)
 library(RBioFormats)
 library(MiXR)
 
-library(BiocParallel)
 library(sp)
+library(doParallel)
+library(pbapply)
 
 #Necessary function==================================================================
 
@@ -38,8 +39,17 @@ Ml=list() #Lits of metadata for each Tumor
 for(Ti in vsi.t$TumID){ #Studied TumorID
   
   P = vsi.t[which(vsi.t$TumID==Ti),Marks]
-  M = lapply(P,function(x)read.metadata(as.character(x)))
-  
+  P = sapply(P, as.character)
+  #
+  nCores=length(Marks)-1
+  cl=makeCluster(nCores)
+  registerDoParallel(cl,nCores)
+  M = pblapply(P,function(x){
+    library(RBioFormats)
+    read.metadata(x)
+    },cl=cl)
+  stopCluster(cl);rm(cl)
+  #
   Pl = c(Pl,list(P))
   Ml = c(Ml,list(M))
   
@@ -65,7 +75,7 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   #Define ROIs 
   g.marks = list();i=1
   for(m in subset(Marks,!grepl('HES',Marks))){
-    I.thb = read.image(as.character(P[,m]),series=2,res=4)
+    I.thb = read.image(as.character(P[m]),series=2,res=4)
     h=10;w=h*(nrow(I.thb)/ncol(I.thb))
     windows(width=w,height=h)
     display(I.thb,method='raster')
@@ -96,7 +106,9 @@ names(Ml)=names(Pl)=names(full.spt)=names(full.g)=vsi.t$TumID
 #====================================================================================
 
 full.dat=list()
-bp.param=SnowParam(workers = 13, type = "SOCK")
+
+cl=makeCluster(13)
+registerDoParallel(cl,13)
 
 for(Ti in vsi.t$TumID){ #Studied TumorID
   
@@ -106,10 +118,10 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   
   for(m in subset(Marks,!grepl('HES',Marks))){
     
-    dat=bplapply(1:(SptF^2),function(i,Ipath,SptF,SptD,Gate,Stain,ID){
+    dat=pblapply(1:(SptF^2),function(i,Ipath,SptF,SptD,Gate,Stain,ID){
       invisible(sapply(list.files('Functions',full.names=T),source))
       VSI.celldetect(Ipath,iSpt=i,SptF,SptD,Gate,Stain,ID)
-    },BPPARAM = bp.param, SptF=SptF,SptD=full.spt[[Ti]][[m]],Gate=full.g[[Ti]][[m]],Ipath=as.character(P[,m]),Stain=m,ID=Ti)
+    },SptF=SptF,SptD=full.spt[[Ti]][[m]],Gate=full.g[[Ti]][[m]],Ipath=as.character(P[m]),Stain=m,ID=Ti,cl=cl)
     
     dat=data.frame(do.call('rbind',dat))
     #dat check (for testing)------------------------------
@@ -131,6 +143,8 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   full.dat=c(full.dat,list(full))
   
 }
+
+stopCluster(cl);rm(cl)
 
 rm(list=c('dat','full','m','Ti'))
 names(full.dat)=vsi.t$TumID
