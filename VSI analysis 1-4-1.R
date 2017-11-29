@@ -23,7 +23,7 @@ Marks = c('CD11c','CD3','F480','HES')
 colnames(vsi.t)=c('TumID',Marks)  
 
 #For testing
-#vsi.t = head(vsi.t,2)
+#vsi.t = head(vsi.t,5)
 
 #====================================================================================
 #PART1 : Gates definition ##
@@ -73,6 +73,11 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   #--------------------------------
   
   #Define ROIs 
+  HE=read.image(as.character(P['HES']),series=2,res=4)
+  h=10;w=h*(nrow(HE)/ncol(HE))
+  windows(width=w,height=h)
+  display(HE,method='raster')
+  
   g.marks = list();i=1
   for(m in subset(Marks,!grepl('HES',Marks))){
     I.thb = read.image(as.character(P[m]),series=2,res=4)
@@ -98,7 +103,7 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   full.g=c(full.g,list(g.hmarks))
 }
 
-rm(list=setdiff(ls(),c('vsi.t','Marks','full.g','full.spt','SptF','Pl','Ml')))
+rm(list=setdiff(ls(),c('vsi.t','Marks','full.g','full.spt','SptF','Pl','Ml','VSI.celldetect')))
 names(Ml)=names(Pl)=names(full.spt)=names(full.g)=vsi.t$TumID
 
 #====================================================================================
@@ -106,9 +111,7 @@ names(Ml)=names(Pl)=names(full.spt)=names(full.g)=vsi.t$TumID
 #====================================================================================
 
 full.dat=list()
-
-cl=makeCluster(13)
-registerDoParallel(cl,13)
+#dir.create('Segs')
 
 for(Ti in vsi.t$TumID){ #Studied TumorID
   
@@ -118,12 +121,23 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   
   for(m in subset(Marks,!grepl('HES',Marks))){
     
+    cl=makeCluster(13)
+    registerDoParallel(cl,13)
+    clusterExport(cl,'VSI.celldetect')
+    invisible(clusterEvalQ(cl,{library('EBImage');library('MiXR');library('sp')}))
+    
     dat=pblapply(1:(SptF^2),function(i,Ipath,SptF,SptD,Gate,Stain,ID){
-      invisible(sapply(list.files('Functions',full.names=T),source))
-      VSI.celldetect(Ipath,iSpt=i,SptF,SptD,Gate,Stain,ID)
+      options(java.parameters = "-Xmx4g")
+      library(RBioFormats)
+      expath=paste0('Segs/',ID,'_',Stain,'_I',i,'.tif')
+      print(SptD$sizeX)
+      exp=F;if(i==median(1:SptF^2)){exp=T}
+      VSI.celldetect(Ipath,iSpt=i,SptF,SptD,Gate,Stain,ID,export=exp,expath=expath)
     },SptF=SptF,SptD=full.spt[[Ti]][[m]],Gate=full.g[[Ti]][[m]],Ipath=as.character(P[m]),Stain=m,ID=Ti,cl=cl)
     
+    stopCluster(cl);rm(cl);gc()
     dat=data.frame(do.call('rbind',dat))
+    
     #dat check (for testing)------------------------------
     # dat$col='black'
     # dat$col[which(dat$ROI==1)]='red'
@@ -133,8 +147,10 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
     # dat$col=color.gradient(dat$Cytoplasm.Brown.b.mean,
     #                        colors=c('white','cornsilk','red','orange','yellow'),
     #                        1000)
+    # windows()
     # plot(dat$Centroid.x,max(dat$Centroid.y)-dat$Centroid.y,
-    #      pch=19,cex=0.4,col=dat$col,axes=F,xlab='',ylab='')
+    #      pch=19,cex=0.4,col=dat$col,axes=F,xlab='',ylab='',
+    #      main=paste(dat$Stain[1],dat$ID[1]))
     #-----------------------------------------------------
     full=c(full,list(dat))
     
@@ -143,8 +159,6 @@ for(Ti in vsi.t$TumID){ #Studied TumorID
   full.dat=c(full.dat,list(full))
   
 }
-
-stopCluster(cl);rm(cl)
 
 rm(list=c('dat','full','m','Ti'))
 names(full.dat)=vsi.t$TumID

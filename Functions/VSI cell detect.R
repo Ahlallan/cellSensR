@@ -1,23 +1,26 @@
-VSI.celldetect=function(Ipath,SptF,iSpt,SptD,Gate,Stain,ID,Th=0.04){
-  
-  options(java.parameters = "-Xmx4g")
-  library(RBioFormats)
-  library(EBImage)
-  library(MiXR)
-  library(sp)
-  
+VSI.celldetect=function(Ipath,SptF,iSpt,SptD,Gate,Stain,ID,Th=0.04,Art=0.065,export=F,expath=paste0(getwd(),'/exp.tif')){
+
+  ##Filters##
   Lap = matrix(c(-1,-1,-1,-1,8,-1,-1,-1,-1),nrow=3)
-  #==
+
+  #==#
   Yp = ceiling(iSpt/SptF)
   Xp = iSpt-(SptF*(Yp-1))
-  #==
+  #==#
   I.mat = read.image(Ipath,series=2,res=1,subset=list(X=SptD$sizeX[[Xp]]:SptD$sizeX[[Xp+1]],
                                                       Y=SptD$sizeY[[Yp]]:SptD$sizeY[[Yp+1]]))
   
-  #==Nucleus detection==#
+  #==Channel split==#
+  
   I1 = channel(1-I.mat[,,1],'grey') #Contains nucleus Info
   I2 = channel(1-I.mat[,,2],'grey') #Contains mix info
   I3 = channel(1-I.mat[,,3],'grey') #Contains Cyto Info
+  
+  #==Detect tissue fold==#
+  IF = closing(opening(I2,makeBrush(51,'disc')),makeBrush(51,'disc'))
+  Fmask = opening(IF>Art,makeBrush(51,'line'));rm(IF) #Black Image if no fold
+
+  #==Nucleus detection==#
   
   #Positive cells: weak nuclear stain
   Hole = NormalizeIm(I3-opening(I3,makeBrush(9,'box'))) #roughly brown stain
@@ -35,12 +38,13 @@ VSI.celldetect=function(Ipath,SptF,iSpt,SptD,Gate,Stain,ID,Th=0.04){
   }
   ##
   Nmask = opening(fillHull(closing(thresh(N,w=21,h=21,offset=0.1),makeBrush(5,'box'))),makeBrush(7,'disc'))
-  Nmask = Nmask|lowN
+  Nmask = Nmask|lowN;Nmask=Nmask*(1-Fmask)
   Nmask = propagate(x=Nmask,seeds=bwlabel(erode(Nmask,makeBrush(5,'disc'))),mask=Nmask)
   
   #==Cytoplasm detection==#
   Ring = dilate(Nmask, makeBrush(7,'disc'))-Nmask
   Cyto = opening(fillHull(Hmask),makeBrush(3,'disc'))
+  Cyto = Cyto*(1-Fmask)
   
   Cell = (Ring|Cyto)|Nmask;Cell=closing(Cell,makeBrush(5,'box'))
   Cell.mask = propagate(Cell,Nmask,mask=Cell)
@@ -48,7 +52,10 @@ VSI.celldetect=function(Ipath,SptF,iSpt,SptD,Gate,Stain,ID,Th=0.04){
   
   #==Export segmented Image==#
   #display(paintObjects(x=Cyto.mask,tgt=paintObjects(x=Nmask,tgt=I.mat,col=c('red',NA)),col=c('limegreen',NA)))
-  
+  if(export){
+    writeImage(paintObjects(x=Cyto.mask,tgt=paintObjects(x=Nmask,tgt=I.mat,col=c('red',NA)),col=c('limegreen',NA)),expath,
+               compression='LZW')
+  }
   
   #==Features extraction==#
   Feat = data.frame(computeFeatures(Nmask,I1,xname='Nucleus',refnames='Blue',
